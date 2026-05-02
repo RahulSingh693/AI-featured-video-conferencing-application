@@ -2,10 +2,17 @@ import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
+import { pool } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
+const PgSession = connectPgSimple(session);
+
 const app: Express = express();
+
+// Trust the Replit reverse proxy so cookies work correctly behind HTTPS
+app.set("trust proxy", 1);
 
 app.use(
   pinoHttp({
@@ -44,6 +51,11 @@ if (!sessionSecret) {
 
 app.use(
   session({
+    store: new PgSession({
+      pool,
+      tableName: "session",
+      createTableIfMissing: true,
+    }),
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,

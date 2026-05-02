@@ -77,9 +77,15 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   });
 });
 
-router.post("/auth/logout", async (req, res): Promise<void> => {
-  req.session.destroy(() => {});
-  res.json({ message: "Logged out successfully" });
+router.post("/auth/logout", (req, res): void => {
+  req.session.destroy((err) => {
+    if (err) {
+      res.status(500).json({ error: "Failed to log out" });
+      return;
+    }
+    res.clearCookie("connect.sid");
+    res.json({ message: "Logged out successfully" });
+  });
 });
 
 router.get("/auth/me", async (req, res): Promise<void> => {

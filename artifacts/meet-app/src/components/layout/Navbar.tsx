@@ -1,5 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useGetCurrentUser, useLogout, getGetCurrentUserQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Video, LogOut, LayoutDashboard, Calendar, Plus } from "lucide-react";
@@ -8,10 +9,13 @@ export function Navbar() {
   const [location, setLocation] = useLocation();
   const { data: user, isLoading } = useGetCurrentUser({ query: { retry: false, queryKey: getGetCurrentUserQueryKey() } });
   const logout = useLogout();
+  const queryClient = useQueryClient();
 
   const handleLogout = () => {
     logout.mutate(undefined, {
       onSuccess: () => {
+        // Clear entire query cache so stale user data is gone immediately
+        queryClient.clear();
         setLocation("/");
       },
     });
@@ -66,7 +70,7 @@ export function Navbar() {
                       <AvatarImage src={user.avatar || undefined} alt={user.name} />
                       <AvatarFallback>{user.name.charAt(0).toUpperCase()}</AvatarFallback>
                     </Avatar>
-                    <Button variant="ghost" size="icon" onClick={handleLogout} data-testid="button-logout">
+                    <Button variant="ghost" size="icon" onClick={handleLogout} disabled={logout.isPending} data-testid="button-logout">
                       <LogOut className="h-4 w-4" />
                       <span className="sr-only">Log out</span>
                     </Button>
