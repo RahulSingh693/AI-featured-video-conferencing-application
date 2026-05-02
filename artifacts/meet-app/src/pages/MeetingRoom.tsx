@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { useMeetingSocket } from "@/hooks/use-meeting-socket";
+import { useWebRTC } from "@/hooks/use-webrtc";
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, Monitor,
   Users, Copy, BrainCircuit, Crown, Wifi, WifiOff,
@@ -23,13 +24,31 @@ const COLORS = [
   "bg-orange-600", "bg-rose-600", "bg-indigo-600", "bg-teal-600",
 ];
 
+function RemoteVideo({ stream }: { stream: MediaStream }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (ref.current && ref.current.srcObject !== stream) {
+      ref.current.srcObject = stream;
+    }
+  }, [stream]);
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      className="w-full h-full object-cover"
+    />
+  );
+}
+
 function ParticipantTile({
   name,
   isSelf,
   isHost,
   attentionScore,
   colorIndex,
-  videoRef,
+  localVideoRef,
+  stream,
   isMuted,
   isVideoOff,
 }: {
@@ -38,26 +57,33 @@ function ParticipantTile({
   isHost?: boolean;
   attentionScore?: number | null;
   colorIndex: number;
-  videoRef?: React.RefObject<HTMLVideoElement | null>;
+  localVideoRef?: React.RefObject<HTMLVideoElement | null>;
+  stream?: MediaStream | null;
   isMuted?: boolean;
   isVideoOff?: boolean;
 }) {
   const color = COLORS[colorIndex % COLORS.length];
+  const showVideo = isSelf ? !isVideoOff : !!stream;
+
   return (
     <div className="relative rounded-xl overflow-hidden bg-zinc-900 aspect-video flex items-center justify-center border border-white/10">
-      {isSelf && videoRef && !isVideoOff ? (
+      {isSelf && localVideoRef && showVideo ? (
         <video
-          ref={videoRef}
+          ref={localVideoRef}
           autoPlay
           muted
           playsInline
           className="w-full h-full object-cover scale-x-[-1]"
         />
+      ) : !isSelf && stream ? (
+        <RemoteVideo stream={stream} />
       ) : (
         <div className={`w-16 h-16 rounded-full ${color} flex items-center justify-center text-white text-2xl font-bold`}>
           {name.charAt(0).toUpperCase()}
         </div>
       )}
+
+      {/* Name + host badge */}
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
         <span className="text-xs text-white font-medium bg-black/50 px-2 py-0.5 rounded-md backdrop-blur-sm">
           {name}{isSelf ? " (You)" : ""}
@@ -68,15 +94,24 @@ function ParticipantTile({
           </span>
         )}
       </div>
+
+      {/* Attention score */}
       {attentionScore != null && (
         <div className="absolute top-2 right-2 text-xs font-bold bg-black/60 text-cyan-400 px-2 py-0.5 rounded-md backdrop-blur-sm">
           {attentionScore.toFixed(0)}%
         </div>
       )}
+
+      {/* Muted indicator */}
       {isMuted && (
         <div className="absolute top-2 left-2 bg-red-500/80 rounded-full p-1 backdrop-blur-sm">
           <MicOff className="h-3 w-3 text-white" />
         </div>
+      )}
+
+      {/* WebRTC connected indicator for remote tiles */}
+      {!isSelf && stream && (
+        <div className="absolute bottom-2 right-2 w-2 h-2 rounded-full bg-green-400 shadow-[0_0_6px_#4ade80]" />
       )}
     </div>
   );
@@ -104,8 +139,9 @@ export default function MeetingRoom() {
   const [showParticipants, setShowParticipants] = useState(false);
   const [attentionScore, setAttentionScore] = useState<number>(82);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const attentionIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -130,7 +166,15 @@ export default function MeetingRoom() {
     onMeetingEnded: handleMeetingEndedByHost,
   });
 
-  // Request camera access
+  // WebRTC peer connections
+  const { remoteStreams } = useWebRTC({
+    meetingId,
+    myUserId: user?.id ?? 0,
+    localStream,
+    enabled: !!user && !!meetingId,
+  });
+
+  // Request camera + mic access
   useEffect(() => {
     let active = true;
     navigator.mediaDevices
@@ -138,9 +182,10 @@ export default function MeetingRoom() {
       .then((stream) => {
         if (!active) { stream.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
+        setLocalStream(stream);
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       })
-      .catch(() => { /* camera not available — show avatar instead */ });
+      .catch(() => { /* camera unavailable — show avatar */ });
     return () => {
       active = false;
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -153,7 +198,7 @@ export default function MeetingRoom() {
     return () => { if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); };
   }, []);
 
-  // Attention tracking — simulate and record every 30s
+  // Simulated attention tracking — records every 30s
   useEffect(() => {
     if (!meetingId || !user) return;
     const sendAttention = () => {
@@ -244,9 +289,8 @@ export default function MeetingRoom() {
     );
   }
 
-  // Build video tiles from real-time socket participants
-  const socketList = Array.from(socketParticipants.values());
-  const otherSocketParticipants = socketList.filter((p) => p.userId !== user?.id);
+  // Build tiles: self + remote participants from socket (real-time)
+  const socketList = Array.from(socketParticipants.values()).filter((p) => p.userId !== user?.id);
 
   const tiles = [
     {
@@ -258,8 +302,9 @@ export default function MeetingRoom() {
       isMuted,
       isVideoOff,
       colorIndex: 0,
+      stream: null as MediaStream | null,
     },
-    ...otherSocketParticipants.slice(0, 5).map((p, i) => ({
+    ...socketList.slice(0, 5).map((p, i) => ({
       id: p.userId,
       name: p.name,
       isSelf: false,
@@ -268,6 +313,7 @@ export default function MeetingRoom() {
       isMuted: p.isMuted,
       isVideoOff: p.isVideoOff,
       colorIndex: i + 1,
+      stream: remoteStreams.get(p.userId) ?? null,
     })),
   ];
 
@@ -277,6 +323,7 @@ export default function MeetingRoom() {
     tiles.length <= 4 ? "grid-cols-2" : "grid-cols-3";
 
   const participantCount = socketParticipants.size || 1;
+  const webrtcConnected = remoteStreams.size > 0;
 
   return (
     <div className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] bg-zinc-950 overflow-hidden">
@@ -290,11 +337,20 @@ export default function MeetingRoom() {
           <span className="text-zinc-400 text-xs font-mono">{formatTime(elapsedSeconds)}</span>
         </div>
         <div className="flex items-center gap-2">
-          {/* Real-time connection indicator */}
+          {/* Connection status */}
           <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md ${connected ? "text-green-400 bg-green-500/10" : "text-zinc-500 bg-zinc-800"}`}>
             {connected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
             <span>{connected ? "Live" : "Connecting…"}</span>
           </div>
+
+          {/* WebRTC peer video indicator */}
+          {webrtcConnected && (
+            <div className="flex items-center gap-1 text-xs px-2 py-1 rounded-md text-cyan-400 bg-cyan-500/10">
+              <Video className="h-3 w-3" />
+              <span>P2P Video</span>
+            </div>
+          )}
+
           <button
             onClick={copyCode}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono transition-colors border border-white/10"
@@ -331,7 +387,8 @@ export default function MeetingRoom() {
                 isHost={tile.isHost}
                 attentionScore={tile.attentionScore}
                 colorIndex={tile.colorIndex}
-                videoRef={tile.isSelf ? videoRef : undefined}
+                localVideoRef={tile.isSelf ? localVideoRef : undefined}
+                stream={tile.stream}
                 isMuted={tile.isMuted}
                 isVideoOff={tile.isVideoOff}
               />
@@ -339,7 +396,7 @@ export default function MeetingRoom() {
           </div>
         </div>
 
-        {/* Participants Panel — shows live socket state */}
+        {/* Participants Panel */}
         {showParticipants && (
           <div className="w-64 bg-zinc-900 border-l border-white/10 flex flex-col">
             <div className="p-4 border-b border-white/10 flex items-center justify-between">
@@ -369,8 +426,8 @@ export default function MeetingRoom() {
                   <span className="text-cyan-400 text-xs font-bold">{attentionScore}%</span>
                 </div>
               </div>
-              {/* Other real-time participants */}
-              {otherSocketParticipants.map((p) => (
+              {/* Remote participants */}
+              {socketList.map((p) => (
                 <div key={p.userId} className="flex items-center gap-2 p-2 rounded-lg bg-white/5 border border-white/10">
                   <Avatar className="h-7 w-7">
                     <AvatarFallback className="text-xs bg-violet-600 text-white">
@@ -379,7 +436,14 @@ export default function MeetingRoom() {
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-xs font-medium truncate">{p.name}</p>
-                    {meeting.hostId === p.userId && <p className="text-yellow-400 text-xs">Host</p>}
+                    <div className="flex items-center gap-1">
+                      {meeting.hostId === p.userId && <span className="text-yellow-400 text-xs">Host</span>}
+                      {remoteStreams.has(p.userId) && (
+                        <span className="text-cyan-400 text-xs flex items-center gap-0.5">
+                          <Video className="h-2.5 w-2.5" /> Live
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1">
                     {p.isMuted && <MicOff className="h-3 w-3 text-red-400" />}
@@ -390,7 +454,7 @@ export default function MeetingRoom() {
                   </div>
                 </div>
               ))}
-              {otherSocketParticipants.length === 0 && (
+              {socketList.length === 0 && (
                 <p className="text-zinc-500 text-xs text-center py-4">
                   You're alone in this meeting.<br />Share the code to invite others.
                 </p>
@@ -411,11 +475,11 @@ export default function MeetingRoom() {
           />
         </div>
         <span className="text-cyan-400 text-xs font-bold">{attentionScore}%</span>
-        <div className="ml-auto flex items-center gap-1 text-green-400 text-xs">
-          {connected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3 text-zinc-500" />}
-          <span className={connected ? "text-green-400" : "text-zinc-500"}>
-            {connected ? "Live" : "Offline"}
-          </span>
+        <div className="ml-auto flex items-center gap-1 text-xs">
+          {connected
+            ? <><Wifi className="h-3 w-3 text-green-400" /><span className="text-green-400">Live</span></>
+            : <><WifiOff className="h-3 w-3 text-zinc-500" /><span className="text-zinc-500">Offline</span></>
+          }
         </div>
       </div>
 
