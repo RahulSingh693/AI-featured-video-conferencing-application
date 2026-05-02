@@ -84,7 +84,12 @@ function ParticipantTile({
         )}
       </div>
       {attentionScore != null && (
-        <div className="absolute top-2 left-2 text-xs font-bold bg-black/60 text-cyan-400 px-2 py-0.5 rounded-md backdrop-blur-sm">
+        <div className={`absolute top-2 left-2 text-xs font-bold px-2 py-0.5 rounded-md backdrop-blur-sm flex items-center gap-1 ${
+          attentionScore >= 75 ? "bg-emerald-900/80 text-emerald-400" :
+          attentionScore >= 50 ? "bg-yellow-900/80 text-yellow-400" :
+          "bg-red-900/80 text-red-400"
+        }`}>
+          <BrainCircuit className="h-2.5 w-2.5" />
           {attentionScore.toFixed(0)}%
         </div>
       )}
@@ -221,18 +226,26 @@ export default function MeetingRoom() {
     return () => { if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); };
   }, []);
 
-  // Attention tracking
+  // Attention tracking — simulates AI gaze/engagement scoring every 8 s
   useEffect(() => {
     if (!meetingId || !user) return;
     const sendAttention = () => {
-      const score = Math.min(100, Math.max(40, attentionScore + (Math.random() * 10 - 5)));
-      const rounded = Math.round(score);
-      setAttentionScore(rounded);
-      if (!isMuted && !isVideoOff) recordAttention.mutate({ meetingId, data: { score: rounded } });
+      setAttentionScore((prev) => {
+        // Baseline shifts based on A/V state
+        const baseline = isMuted && isVideoOff ? 38 : isVideoOff ? 58 : isMuted ? 70 : 80;
+        // Random walk toward baseline with occasional spikes/dips
+        const drift = (Math.random() * 18 - 9);           // ±9 random noise
+        const pull  = (baseline - prev) * 0.18;           // regression to baseline
+        const next  = Math.min(100, Math.max(10, Math.round(prev + drift + pull)));
+        recordAttention.mutate({ meetingId, data: { score: next } });
+        return next;
+      });
     };
-    attentionIntervalRef.current = setInterval(sendAttention, 30000);
+    sendAttention(); // immediate first reading
+    attentionIntervalRef.current = setInterval(sendAttention, 8000);
     return () => { if (attentionIntervalRef.current) clearInterval(attentionIntervalRef.current); };
-  }, [meetingId, user, isMuted, isVideoOff, attentionScore, recordAttention]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingId, user?.id, isMuted, isVideoOff]);
 
   const toggleMute = useCallback(() => {
     const next = !isMuted;
@@ -321,6 +334,13 @@ export default function MeetingRoom() {
   const socketList = Array.from(socketParticipants.values()).filter((p) => p.userId !== user?.id);
   const participantCount = socketParticipants.size || 1;
   const webrtcConnected = remoteStreams.size > 0;
+
+  // Room-average attention across all participants with a score
+  const allScores = [
+    attentionScore,
+    ...socketList.map((p) => p.attentionScore).filter((s): s is number => s != null),
+  ];
+  const roomAttention = Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length);
 
   const tiles = [
     { id: -1, name: user?.name ?? "You", isSelf: true, isHost, attentionScore, isMuted, isVideoOff, isHandRaised, colorIndex: 0, stream: null as MediaStream | null },
@@ -542,15 +562,42 @@ export default function MeetingRoom() {
 
       {/* ── Attention Bar ── */}
       <div className="px-4 py-2 bg-zinc-900/60 border-t border-white/5 flex items-center gap-3">
-        <BrainCircuit className="h-4 w-4 text-cyan-400 flex-shrink-0" />
-        <span className="text-zinc-400 text-xs">Attention</span>
-        <div className="flex-1 bg-zinc-800 rounded-full h-1.5 max-w-xs">
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-primary transition-all duration-1000"
-            style={{ width: `${attentionScore}%` }}
-          />
+        {/* Pulsing AI tracking badge */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
+          </div>
+          <BrainCircuit className="h-4 w-4 text-cyan-400" />
+          <span className="text-zinc-400 text-xs hidden sm:inline">AI Tracking</span>
         </div>
-        <span className="text-cyan-400 text-xs font-bold">{attentionScore}%</span>
+
+        {/* My score */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-zinc-500 text-xs">You</span>
+          <span className={`text-xs font-bold ${attentionScore >= 75 ? "text-emerald-400" : attentionScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+            {attentionScore}%
+          </span>
+        </div>
+
+        {/* Room average bar */}
+        <div className="flex-1 flex items-center gap-2 max-w-sm">
+          <span className="text-zinc-500 text-xs flex-shrink-0">Room avg</span>
+          <div className="flex-1 bg-zinc-800 rounded-full h-1.5">
+            <div
+              className={`h-full rounded-full transition-all duration-1000 ${
+                roomAttention >= 75 ? "bg-gradient-to-r from-emerald-500 to-emerald-400" :
+                roomAttention >= 50 ? "bg-gradient-to-r from-yellow-500 to-yellow-400" :
+                "bg-gradient-to-r from-red-500 to-red-400"
+              }`}
+              style={{ width: `${roomAttention}%` }}
+            />
+          </div>
+          <span className={`text-xs font-bold flex-shrink-0 ${roomAttention >= 75 ? "text-emerald-400" : roomAttention >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+            {roomAttention}%
+          </span>
+        </div>
+
         <div className="ml-auto flex items-center gap-1 text-xs">
           {connected
             ? <><Wifi className="h-3 w-3 text-green-400" /><span className="text-green-400">Live</span></>
