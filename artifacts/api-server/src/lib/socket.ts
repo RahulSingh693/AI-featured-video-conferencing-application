@@ -14,9 +14,9 @@ export interface ParticipantPresence {
 }
 
 type SignalData =
-  | { type: "offer"; sdp: RTCSessionDescriptionInit }
-  | { type: "answer"; sdp: RTCSessionDescriptionInit }
-  | { type: "ice-candidate"; candidate: RTCIceCandidateInit | null };
+  | { type: "offer"; sdp: { type: string; sdp?: string } }
+  | { type: "answer"; sdp: { type: string; sdp?: string } }
+  | { type: "ice-candidate"; candidate: { candidate?: string; sdpMid?: string | null; sdpMLineIndex?: number | null } | null };
 
 export interface ChatMessage {
   id: string;
@@ -57,6 +57,13 @@ const socketUserMap = new Map<string, number>();
 
 // meetingId -> (userId -> socketId) — for routing WebRTC signals
 const meetingSocketMap = new Map<number, Map<number, string>>();
+
+// meetingId -> chat messages (in-memory log for AI summary)
+const meetingChatLog = new Map<number, ChatMessage[]>();
+
+export function getMeetingChatLog(meetingId: number): ChatMessage[] {
+  return meetingChatLog.get(meetingId) ?? [];
+}
 
 function getMeetingSocketMap(meetingId: number): Map<number, string> {
   if (!meetingSocketMap.has(meetingId)) {
@@ -187,6 +194,10 @@ export function initSocket(httpServer: HttpServer) {
         timestamp: new Date().toISOString(),
       };
 
+      // Append to in-memory chat log for AI summary
+      if (!meetingChatLog.has(meetingId)) meetingChatLog.set(meetingId, []);
+      meetingChatLog.get(meetingId)!.push(msg);
+
       io?.to(`meeting:${meetingId}`).emit("chat:message", msg);
       logger.info({ meetingId, userId, msgId: msg.id }, "Chat message broadcast");
     });
@@ -215,7 +226,8 @@ export function emitToMeeting<K extends keyof ServerToClientEvents>(
   data: Parameters<ServerToClientEvents[K]>[0],
 ) {
   if (!io) return;
-  (io.to(`meeting:${meetingId}`) as ReturnType<typeof io.to>).emit(event, data as never);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (io.to(`meeting:${meetingId}`) as any).emit(event, data);
 }
 
 export function updateParticipantAttention(meetingId: number, userId: number, attentionScore: number) {
@@ -233,6 +245,9 @@ export function broadcastMeetingEnded(meetingId: number) {
   if (!io) return;
   io.to(`meeting:${meetingId}`).emit("meeting:ended", { meetingId });
   meetingRooms.delete(meetingId);
+  // Keep chat log briefly so the summary route can read it right after end,
+  // then clear after 5 minutes
+  setTimeout(() => meetingChatLog.delete(meetingId), 5 * 60 * 1000);
 }
 
 export { io };

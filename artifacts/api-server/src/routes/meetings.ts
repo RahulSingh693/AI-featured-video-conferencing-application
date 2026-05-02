@@ -14,7 +14,8 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth } from "../lib/auth-middleware";
 import { generateMeetingCode } from "../lib/code-gen";
-import { broadcastMeetingEnded, updateParticipantAttention } from "../lib/socket";
+import { broadcastMeetingEnded, updateParticipantAttention, getMeetingChatLog } from "../lib/socket";
+import { openai } from "@workspace/integrations-openai-ai-server";
 
 const router: IRouter = Router();
 
@@ -282,19 +283,75 @@ router.post("/meetings/:meetingId/end", requireAuth, async (req, res): Promise<v
 
   const endedAt = new Date();
 
-  // Generate a simple AI-like summary
-  const summary = `Meeting "${meeting.title}" was conducted successfully. Key topics were discussed and action items were identified by participants.`;
-  const keyPoints = JSON.stringify([
-    "Meeting objectives were discussed",
-    "Team updates were shared",
-    "Next steps were agreed upon",
-    "Follow-up actions were assigned",
-  ]);
-  const actionItems = JSON.stringify([
-    "Schedule follow-up meeting within a week",
-    "Share meeting notes with all participants",
-    "Complete assigned tasks by next meeting",
-  ]);
+  // Gather participants + attention scores for the AI prompt
+  const participantRows = await db
+    .select({ name: usersTable.name, attentionScore: participantsTable.attentionScore })
+    .from(participantsTable)
+    .innerJoin(usersTable, eq(participantsTable.userId, usersTable.id))
+    .where(eq(participantsTable.meetingId, meeting.id));
+
+  const durationMinutes = Math.round((endedAt.getTime() - new Date(meeting.createdAt).getTime()) / 60000);
+
+  // Chat messages logged in-memory during the meeting
+  const chatLog = getMeetingChatLog(meeting.id);
+  const chatSection = chatLog.length > 0
+    ? chatLog.map((m) => `[${m.name}]: ${m.text}`).join("\n")
+    : "No chat messages during this meeting.";
+
+  const participantSection = participantRows
+    .map((p) => `- ${p.name} (attention: ${p.attentionScore != null ? `${Math.round(Number(p.attentionScore))}%` : "N/A"})`)
+    .join("\n");
+
+  // Generate AI summary
+  let summary: string;
+  let keyPoints: string;
+  let actionItems: string;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      max_completion_tokens: 1024,
+      messages: [
+        {
+          role: "system",
+          content: `You are a professional meeting assistant that generates concise, structured meeting summaries.
+Always respond with valid JSON matching exactly this shape:
+{
+  "summary": "2-3 sentence professional narrative summary",
+  "keyPoints": ["point 1", "point 2", "point 3", "point 4", "point 5"],
+  "actionItems": ["action 1", "action 2", "action 3"]
+}`,
+        },
+        {
+          role: "user",
+          content: `Generate a meeting summary for the following meeting:
+
+Title: ${meeting.title}
+Duration: ${durationMinutes} minute(s)
+Participants (${participantRows.length}):
+${participantSection}
+
+Chat transcript:
+${chatSection}
+
+Produce a professional summary with 4-5 key discussion points and 3-4 concrete action items. Base them on the chat content if available, otherwise infer reasonable points for a meeting with this title. Keep the tone professional and concise.`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "";
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+
+    summary = parsed?.summary ?? `"${meeting.title}" was conducted successfully with ${participantRows.length} participant(s) over ${durationMinutes} minute(s).`;
+    keyPoints = JSON.stringify(Array.isArray(parsed?.keyPoints) ? parsed.keyPoints : ["Meeting objectives covered", "Team updates shared", "Next steps agreed"]);
+    actionItems = JSON.stringify(Array.isArray(parsed?.actionItems) ? parsed.actionItems : ["Schedule follow-up meeting", "Share notes with all participants"]);
+  } catch (err) {
+    // Fallback if AI unavailable
+    summary = `"${meeting.title}" concluded with ${participantRows.length} participant(s) over ${durationMinutes} minute(s). Key topics were discussed and action items assigned.`;
+    keyPoints = JSON.stringify(["Meeting objectives discussed", "Team updates shared", "Next steps agreed upon", "Follow-up actions assigned"]);
+    actionItems = JSON.stringify(["Schedule follow-up meeting within a week", "Share meeting notes with all participants", "Complete assigned tasks before next meeting"]);
+  }
 
   const [updated] = await db
     .update(meetingsTable)
