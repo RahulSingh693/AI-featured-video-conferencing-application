@@ -19,28 +19,16 @@ app.use(
     logger,
     serializers: {
       req(req) {
-        return {
-          id: req.id,
-          method: req.method,
-          url: req.url?.split("?")[0],
-        };
+        return { id: req.id, method: req.method, url: req.url?.split("?")[0] };
       },
       res(res) {
-        return {
-          statusCode: res.statusCode,
-        };
+        return { statusCode: res.statusCode };
       },
     },
   }),
 );
 
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-  }),
-);
-
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -51,11 +39,9 @@ if (!sessionSecret) {
 
 app.use(
   session({
-    store: new PgSession({
-      pool,
-      tableName: "session",
-      createTableIfMissing: true,
-    }),
+    // Do NOT use createTableIfMissing — esbuild loses the table.sql file path.
+    // The table is created explicitly in index.ts before the server starts.
+    store: new PgSession({ pool, tableName: "session" }),
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
