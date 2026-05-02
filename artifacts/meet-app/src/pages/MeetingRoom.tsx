@@ -18,7 +18,7 @@ import { useMeetingChat } from "@/hooks/use-meeting-chat";
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, Monitor,
   Users, Copy, BrainCircuit, Crown, Wifi, WifiOff,
-  MessageSquare, Send,
+  MessageSquare, Send, Hand,
 } from "lucide-react";
 
 const COLORS = [
@@ -38,7 +38,7 @@ function RemoteVideo({ stream }: { stream: MediaStream }) {
 
 function ParticipantTile({
   name, isSelf, isHost, attentionScore, colorIndex,
-  localVideoRef, stream, isMuted, isVideoOff,
+  localVideoRef, stream, isMuted, isVideoOff, isHandRaised,
 }: {
   name: string;
   isSelf?: boolean;
@@ -49,12 +49,13 @@ function ParticipantTile({
   stream?: MediaStream | null;
   isMuted?: boolean;
   isVideoOff?: boolean;
+  isHandRaised?: boolean;
 }) {
   const color = COLORS[colorIndex % COLORS.length];
   const showLocalVideo = isSelf && !!localVideoRef && !isVideoOff;
   const showRemoteVideo = !isSelf && !!stream;
   return (
-    <div className="relative rounded-xl overflow-hidden bg-zinc-900 aspect-video flex items-center justify-center border border-white/10">
+    <div className={`relative rounded-xl overflow-hidden bg-zinc-900 aspect-video flex items-center justify-center border transition-all duration-300 ${isHandRaised ? "border-yellow-400/70 shadow-[0_0_16px_rgba(250,204,21,0.25)]" : "border-white/10"}`}>
       {showLocalVideo ? (
         <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover scale-x-[-1]" />
       ) : showRemoteVideo ? (
@@ -64,6 +65,14 @@ function ParticipantTile({
           {name.charAt(0).toUpperCase()}
         </div>
       )}
+
+      {/* Raised hand badge */}
+      {isHandRaised && (
+        <div className="absolute top-2 right-2 bg-yellow-400 rounded-full w-7 h-7 flex items-center justify-center shadow-lg animate-bounce">
+          <span className="text-sm leading-none">✋</span>
+        </div>
+      )}
+
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
         <span className="text-xs text-white font-medium bg-black/50 px-2 py-0.5 rounded-md backdrop-blur-sm">
           {name}{isSelf ? " (You)" : ""}
@@ -75,12 +84,12 @@ function ParticipantTile({
         )}
       </div>
       {attentionScore != null && (
-        <div className="absolute top-2 right-2 text-xs font-bold bg-black/60 text-cyan-400 px-2 py-0.5 rounded-md backdrop-blur-sm">
+        <div className="absolute top-2 left-2 text-xs font-bold bg-black/60 text-cyan-400 px-2 py-0.5 rounded-md backdrop-blur-sm">
           {attentionScore.toFixed(0)}%
         </div>
       )}
       {isMuted && (
-        <div className="absolute top-2 left-2 bg-red-500/80 rounded-full p-1 backdrop-blur-sm">
+        <div className="absolute bottom-8 left-2 bg-red-500/80 rounded-full p-1 backdrop-blur-sm">
           <MicOff className="h-3 w-3 text-white" />
         </div>
       )}
@@ -115,6 +124,7 @@ export default function MeetingRoom() {
 
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
+  const [isHandRaised, setIsHandRaised] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -139,14 +149,34 @@ export default function MeetingRoom() {
     }
   }, [isHost, meetingId, setLocation, toast]);
 
-  const { participants: socketParticipants, connected, updateStatus } = useMeetingSocket({
+  const handleHandRaised = useCallback(
+    (raisedUserId: number, raisedName: string) => {
+      if (isHost) {
+        toast({
+          title: "✋ Hand Raised",
+          description: `${raisedName} wants to speak`,
+          duration: 5000,
+        });
+      }
+    },
+    [isHost, toast],
+  );
+
+  const { participants: socketParticipants, connected, updateStatus, toggleHand } = useMeetingSocket({
     meetingId,
     userId: user?.id ?? 0,
     name: user?.name ?? "",
     avatar: user?.avatar ?? null,
     enabled: socketEnabled,
     onMeetingEnded: handleMeetingEndedByHost,
+    onHandRaised: handleHandRaised,
   });
+
+  const handleToggleHand = useCallback(() => {
+    const next = !isHandRaised;
+    setIsHandRaised(next);
+    toggleHand();
+  }, [isHandRaised, toggleHand]);
 
   const { remoteStreams } = useWebRTC({
     meetingId,
@@ -293,12 +323,12 @@ export default function MeetingRoom() {
   const webrtcConnected = remoteStreams.size > 0;
 
   const tiles = [
-    { id: -1, name: user?.name ?? "You", isSelf: true, isHost, attentionScore, isMuted, isVideoOff, colorIndex: 0, stream: null as MediaStream | null },
+    { id: -1, name: user?.name ?? "You", isSelf: true, isHost, attentionScore, isMuted, isVideoOff, isHandRaised, colorIndex: 0, stream: null as MediaStream | null },
     ...socketList.slice(0, 5).map((p, i) => ({
       id: p.userId, name: p.name, isSelf: false,
       isHost: meeting.hostId === p.userId,
       attentionScore: p.attentionScore,
-      isMuted: p.isMuted, isVideoOff: p.isVideoOff,
+      isMuted: p.isMuted, isVideoOff: p.isVideoOff, isHandRaised: p.isHandRaised,
       colorIndex: i + 1,
       stream: remoteStreams.get(p.userId) ?? null,
     })),
@@ -365,6 +395,7 @@ export default function MeetingRoom() {
                 stream={tile.stream}
                 isMuted={tile.isMuted}
                 isVideoOff={tile.isVideoOff}
+                isHandRaised={tile.isHandRaised}
               />
             ))}
           </div>
@@ -383,7 +414,7 @@ export default function MeetingRoom() {
               )}
             </div>
             <div className="flex-1 overflow-auto p-3 space-y-2">
-              <div className="flex items-center gap-2 p-2 rounded-lg bg-white/5 border border-white/10">
+              <div className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${isHandRaised ? "bg-yellow-400/10 border-yellow-400/30" : "bg-white/5 border-white/10"}`}>
                 <Avatar className="h-7 w-7">
                   <AvatarFallback className="text-xs bg-primary text-primary-foreground">{user?.name.charAt(0)}</AvatarFallback>
                 </Avatar>
@@ -392,13 +423,14 @@ export default function MeetingRoom() {
                   {isHost && <p className="text-yellow-400 text-xs">Host</p>}
                 </div>
                 <div className="flex items-center gap-1">
+                  {isHandRaised && <span className="text-sm">✋</span>}
                   {isMuted && <MicOff className="h-3 w-3 text-red-400" />}
                   {isVideoOff && <VideoOff className="h-3 w-3 text-red-400" />}
                   <span className="text-cyan-400 text-xs font-bold">{attentionScore}%</span>
                 </div>
               </div>
               {socketList.map((p) => (
-                <div key={p.userId} className="flex items-center gap-2 p-2 rounded-lg bg-white/5 border border-white/10">
+                <div key={p.userId} className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${p.isHandRaised ? "bg-yellow-400/10 border-yellow-400/30" : "bg-white/5 border-white/10"}`}>
                   <Avatar className="h-7 w-7">
                     <AvatarFallback className="text-xs bg-violet-600 text-white">{p.name.charAt(0)}</AvatarFallback>
                   </Avatar>
@@ -414,6 +446,7 @@ export default function MeetingRoom() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
+                    {p.isHandRaised && <span className="text-sm">✋</span>}
                     {p.isMuted && <MicOff className="h-3 w-3 text-red-400" />}
                     {p.isVideoOff && <VideoOff className="h-3 w-3 text-red-400" />}
                     {p.attentionScore != null && (
@@ -564,6 +597,20 @@ export default function MeetingRoom() {
         </button>
 
         {/* Chat button with unread badge */}
+        {/* Raise Hand */}
+        <button
+          onClick={handleToggleHand}
+          className={`flex flex-col items-center gap-1 p-3 rounded-xl transition-all duration-200 ${
+            isHandRaised
+              ? "bg-yellow-400/20 text-yellow-400 hover:bg-yellow-400/30 ring-1 ring-yellow-400/50"
+              : "bg-white/10 text-white hover:bg-white/20"
+          }`}
+          data-testid="button-raise-hand"
+        >
+          <Hand className="h-5 w-5" />
+          <span className="text-xs">{isHandRaised ? "Lower" : "Raise"}</span>
+        </button>
+
         <button
           onClick={() => { setShowChat((v) => !v); setShowParticipants(false); }}
           className={`relative flex flex-col items-center gap-1 p-3 rounded-xl transition-colors ${showChat ? "bg-primary/20 text-primary" : "bg-white/10 text-white hover:bg-white/20"}`}

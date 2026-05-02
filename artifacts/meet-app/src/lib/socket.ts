@@ -8,6 +8,7 @@ export interface ParticipantPresence {
   attentionScore: number | null;
   isMuted: boolean;
   isVideoOff: boolean;
+  isHandRaised: boolean;
 }
 
 export type SignalData =
@@ -32,6 +33,8 @@ export interface ServerToClientEvents {
   "webrtc:signal": (data: { fromUserId: number; signal: SignalData }) => void;
   "webrtc:new-peer": (data: { userId: number; name: string }) => void;
   "chat:message": (data: ChatMessage) => void;
+  "hand:raised": (data: { userId: number; name: string }) => void;
+  "hand:lowered": (data: { userId: number }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -40,6 +43,7 @@ export interface ClientToServerEvents {
   "participant:status": (data: { meetingId: number; userId: number; isMuted?: boolean; isVideoOff?: boolean }) => void;
   "webrtc:signal": (data: { meetingId: number; targetUserId: number; signal: SignalData }) => void;
   "chat:message": (data: { meetingId: number; text: string }) => void;
+  "hand:toggle": (data: { meetingId: number; userId: number }) => void;
 }
 
 let socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;

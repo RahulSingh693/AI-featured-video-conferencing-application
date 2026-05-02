@@ -10,6 +10,7 @@ export interface ParticipantPresence {
   attentionScore: number | null;
   isMuted: boolean;
   isVideoOff: boolean;
+  isHandRaised: boolean;
 }
 
 type SignalData =
@@ -34,6 +35,8 @@ export interface ServerToClientEvents {
   "webrtc:signal": (data: { fromUserId: number; signal: SignalData }) => void;
   "webrtc:new-peer": (data: { userId: number; name: string }) => void;
   "chat:message": (data: ChatMessage) => void;
+  "hand:raised": (data: { userId: number; name: string }) => void;
+  "hand:lowered": (data: { userId: number }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -42,6 +45,7 @@ export interface ClientToServerEvents {
   "participant:status": (data: { meetingId: number; userId: number; isMuted?: boolean; isVideoOff?: boolean }) => void;
   "webrtc:signal": (data: { meetingId: number; targetUserId: number; signal: SignalData }) => void;
   "chat:message": (data: { meetingId: number; text: string }) => void;
+  "hand:toggle": (data: { meetingId: number; userId: number }) => void;
 }
 
 let io: SocketIOServer<ClientToServerEvents, ServerToClientEvents> | null = null;
@@ -99,6 +103,7 @@ export function initSocket(httpServer: HttpServer) {
         attentionScore: null,
         isMuted: false,
         isVideoOff: false,
+        isHandRaised: false,
       };
       room.set(userId, presence);
 
@@ -146,6 +151,24 @@ export function initSocket(httpServer: HttpServer) {
         room.set(userId, p);
       }
       io?.to(`meeting:${meetingId}`).emit("participant:updated", { userId, isMuted, isVideoOff });
+    });
+
+    socket.on("hand:toggle", ({ meetingId, userId }) => {
+      const room = meetingRooms.get(meetingId);
+      if (!room?.has(userId)) return;
+
+      const p = room.get(userId)!;
+      p.isHandRaised = !p.isHandRaised;
+      room.set(userId, p);
+
+      const roomName = `meeting:${meetingId}`;
+      if (p.isHandRaised) {
+        io?.to(roomName).emit("hand:raised", { userId, name: p.name });
+      } else {
+        io?.to(roomName).emit("hand:lowered", { userId });
+      }
+
+      logger.info({ meetingId, userId, isHandRaised: p.isHandRaised }, "Hand toggled");
     });
 
     socket.on("chat:message", ({ meetingId, text }) => {

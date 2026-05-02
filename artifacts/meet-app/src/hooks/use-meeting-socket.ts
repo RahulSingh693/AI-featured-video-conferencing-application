@@ -8,6 +8,7 @@ interface UseMeetingSocketOptions {
   avatar: string | null;
   enabled: boolean;
   onMeetingEnded?: () => void;
+  onHandRaised?: (userId: number, name: string) => void;
 }
 
 export function useMeetingSocket({
@@ -17,6 +18,7 @@ export function useMeetingSocket({
   avatar,
   enabled,
   onMeetingEnded,
+  onHandRaised,
 }: UseMeetingSocketOptions) {
   const [participants, setParticipants] = useState<Map<number, ParticipantPresence>>(new Map());
   const [connected, setConnected] = useState(false);
@@ -32,6 +34,14 @@ export function useMeetingSocket({
     [meetingId, userId, enabled],
   );
 
+  const toggleHand = useCallback(() => {
+    if (!enabled) return;
+    const socket = getSocket();
+    if (socket.connected) {
+      socket.emit("hand:toggle", { meetingId, userId });
+    }
+  }, [meetingId, userId, enabled]);
+
   useEffect(() => {
     if (!enabled || !meetingId || !userId) return;
 
@@ -42,9 +52,7 @@ export function useMeetingSocket({
       socket.emit("meeting:join", { meetingId, userId, name, avatar });
     };
 
-    const onDisconnect = () => {
-      setConnected(false);
-    };
+    const onDisconnect = () => setConnected(false);
 
     const onRoomState = ({ participants: list }: { participants: ParticipantPresence[] }) => {
       setParticipants(new Map(list.map((p) => [p.userId, p])));
@@ -82,9 +90,27 @@ export function useMeetingSocket({
       });
     };
 
-    const onMeetingEnded = () => {
-      onMeetingEnded?.();
+    const onHandRaisedEvt = ({ userId: raisedId, name: raisedName }: { userId: number; name: string }) => {
+      setParticipants((prev) => {
+        const existing = prev.get(raisedId);
+        if (!existing) return prev;
+        return new Map(prev).set(raisedId, { ...existing, isHandRaised: true });
+      });
+      // Notify the host (or anyone listening) via the callback
+      if (raisedId !== userId) {
+        onHandRaised?.(raisedId, raisedName);
+      }
     };
+
+    const onHandLoweredEvt = ({ userId: loweredId }: { userId: number }) => {
+      setParticipants((prev) => {
+        const existing = prev.get(loweredId);
+        if (!existing) return prev;
+        return new Map(prev).set(loweredId, { ...existing, isHandRaised: false });
+      });
+    };
+
+    const onMeetingEndedEvt = () => { onMeetingEnded?.(); };
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
@@ -92,7 +118,9 @@ export function useMeetingSocket({
     socket.on("participant:joined", onParticipantJoined);
     socket.on("participant:left", onParticipantLeft);
     socket.on("participant:updated", onParticipantUpdated);
-    socket.on("meeting:ended", onMeetingEnded);
+    socket.on("hand:raised", onHandRaisedEvt);
+    socket.on("hand:lowered", onHandLoweredEvt);
+    socket.on("meeting:ended", onMeetingEndedEvt);
 
     if (!socket.connected) {
       socket.connect();
@@ -109,9 +137,11 @@ export function useMeetingSocket({
       socket.off("participant:joined", onParticipantJoined);
       socket.off("participant:left", onParticipantLeft);
       socket.off("participant:updated", onParticipantUpdated);
-      socket.off("meeting:ended", onMeetingEnded);
+      socket.off("hand:raised", onHandRaisedEvt);
+      socket.off("hand:lowered", onHandLoweredEvt);
+      socket.off("meeting:ended", onMeetingEndedEvt);
     };
-  }, [meetingId, userId, name, avatar, enabled, onMeetingEnded]);
+  }, [meetingId, userId, name, avatar, enabled, onMeetingEnded, onHandRaised]);
 
-  return { participants, connected, updateStatus };
+  return { participants, connected, updateStatus, toggleHand };
 }
