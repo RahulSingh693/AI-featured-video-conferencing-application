@@ -3,22 +3,19 @@ import { useLocation, useParams } from "wouter";
 import {
   useGetCurrentUser,
   useGetMeeting,
-  useGetMeetingParticipants,
   useEndMeeting,
   useRecordAttention,
   getGetMeetingQueryKey,
-  getGetMeetingParticipantsQueryKey,
   getGetCurrentUserQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
+import { useMeetingSocket } from "@/hooks/use-meeting-socket";
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, Monitor,
-  Users, Copy, BrainCircuit, Crown, Wifi,
+  Users, Copy, BrainCircuit, Crown, Wifi, WifiOff,
 } from "lucide-react";
 
 const COLORS = [
@@ -61,7 +58,6 @@ function ParticipantTile({
           {name.charAt(0).toUpperCase()}
         </div>
       )}
-      {/* Overlay labels */}
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
         <span className="text-xs text-white font-medium bg-black/50 px-2 py-0.5 rounded-md backdrop-blur-sm">
           {name}{isSelf ? " (You)" : ""}
@@ -82,10 +78,6 @@ function ParticipantTile({
           <MicOff className="h-3 w-3 text-white" />
         </div>
       )}
-      {/* Simulated speaking animation */}
-      {!isSelf && (
-        <div className="absolute inset-0 rounded-xl border-2 border-transparent" />
-      )}
     </div>
   );
 }
@@ -97,16 +89,11 @@ export default function MeetingRoom() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: user, isLoading: userLoading } = useGetCurrentUser({ query: { retry: false, queryKey: getGetCurrentUserQueryKey() } });
+  const { data: user, isLoading: userLoading } = useGetCurrentUser({
+    query: { retry: false, queryKey: getGetCurrentUserQueryKey() },
+  });
   const { data: meeting, isLoading: meetingLoading } = useGetMeeting(meetingId, {
     query: { enabled: !!meetingId, queryKey: getGetMeetingQueryKey(meetingId) },
-  });
-  const { data: participants } = useGetMeetingParticipants(meetingId, {
-    query: {
-      enabled: !!meetingId,
-      queryKey: getGetMeetingParticipantsQueryKey(meetingId),
-      refetchInterval: 10000,
-    },
   });
 
   const endMeeting = useEndMeeting();
@@ -117,12 +104,31 @@ export default function MeetingRoom() {
   const [showParticipants, setShowParticipants] = useState(false);
   const [attentionScore, setAttentionScore] = useState<number>(82);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [cameraError, setCameraError] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const attentionIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const isHost = meeting?.hostId === user?.id;
+
+  // Real-time socket presence
+  const handleMeetingEndedByHost = useCallback(() => {
+    if (!isHost) {
+      toast({ title: "Meeting ended", description: "The host has ended this meeting." });
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      setLocation(`/meetings/${meetingId}/summary`);
+    }
+  }, [isHost, meetingId, setLocation, toast]);
+
+  const { participants: socketParticipants, connected, updateStatus } = useMeetingSocket({
+    meetingId,
+    userId: user?.id ?? 0,
+    name: user?.name ?? "",
+    avatar: user?.avatar ?? null,
+    enabled: !!user && !!meetingId,
+    onMeetingEnded: handleMeetingEndedByHost,
+  });
 
   // Request camera access
   useEffect(() => {
@@ -134,9 +140,7 @@ export default function MeetingRoom() {
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
       })
-      .catch(() => {
-        if (active) setCameraError(true);
-      });
+      .catch(() => { /* camera not available — show avatar instead */ });
     return () => {
       active = false;
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -145,52 +149,40 @@ export default function MeetingRoom() {
 
   // Meeting timer
   useEffect(() => {
-    timerIntervalRef.current = setInterval(() => {
-      setElapsedSeconds((s) => s + 1);
-    }, 1000);
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    };
+    timerIntervalRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => { if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); };
   }, []);
 
-  // Attention tracking — simulate and submit every 30s
+  // Attention tracking — simulate and record every 30s
   useEffect(() => {
     if (!meetingId || !user) return;
-
     const sendAttention = () => {
       const score = Math.min(100, Math.max(40, attentionScore + (Math.random() * 10 - 5)));
-      setAttentionScore(Math.round(score));
+      const rounded = Math.round(score);
+      setAttentionScore(rounded);
       if (!isMuted && !isVideoOff) {
-        recordAttention.mutate({ meetingId, data: { score: Math.round(score) } });
+        recordAttention.mutate({ meetingId, data: { score: rounded } });
       }
     };
-
     attentionIntervalRef.current = setInterval(sendAttention, 30000);
-    return () => {
-      if (attentionIntervalRef.current) clearInterval(attentionIntervalRef.current);
-    };
+    return () => { if (attentionIntervalRef.current) clearInterval(attentionIntervalRef.current); };
   }, [meetingId, user, isMuted, isVideoOff, attentionScore, recordAttention]);
 
-  // Toggle mute
   const toggleMute = useCallback(() => {
-    const stream = streamRef.current;
-    if (stream) {
-      stream.getAudioTracks().forEach((t) => { t.enabled = isMuted; });
-    }
-    setIsMuted((v) => !v);
-  }, [isMuted]);
+    const newMuted = !isMuted;
+    streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !newMuted; });
+    setIsMuted(newMuted);
+    updateStatus(newMuted, isVideoOff);
+  }, [isMuted, isVideoOff, updateStatus]);
 
-  // Toggle video
   const toggleVideo = useCallback(() => {
-    const stream = streamRef.current;
-    if (stream) {
-      stream.getVideoTracks().forEach((t) => { t.enabled = isVideoOff; });
-    }
-    setIsVideoOff((v) => !v);
-  }, [isVideoOff]);
+    const newOff = !isVideoOff;
+    streamRef.current?.getVideoTracks().forEach((t) => { t.enabled = !newOff; });
+    setIsVideoOff(newOff);
+    updateStatus(isMuted, newOff);
+  }, [isVideoOff, isMuted, updateStatus]);
 
   const handleEndLeave = useCallback(() => {
-    const isHost = meeting?.hostId === user?.id;
     if (isHost) {
       endMeeting.mutate(
         { meetingId },
@@ -209,13 +201,13 @@ export default function MeetingRoom() {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       setLocation("/dashboard");
     }
-  }, [meeting, user, meetingId, endMeeting, queryClient, setLocation, toast]);
+  }, [isHost, meetingId, endMeeting, queryClient, setLocation, toast]);
 
   const copyCode = () => {
     if (meeting?.code) {
-      navigator.clipboard.writeText(meeting.code).then(() => {
-        toast({ title: "Copied!", description: "Meeting code copied to clipboard" });
-      });
+      navigator.clipboard.writeText(meeting.code).then(() =>
+        toast({ title: "Copied!", description: "Meeting code copied to clipboard" }),
+      );
     }
   };
 
@@ -244,26 +236,37 @@ export default function MeetingRoom() {
       <div className="flex-1 flex items-center justify-center bg-zinc-950 text-white">
         <div className="text-center">
           <p className="text-lg font-medium">Meeting not found</p>
-          <Button variant="outline" className="mt-4" onClick={() => setLocation("/meetings")}>
+          <button className="mt-4 px-4 py-2 bg-zinc-800 rounded-lg text-sm" onClick={() => setLocation("/meetings")}>
             Back to Meetings
-          </Button>
+          </button>
         </div>
       </div>
     );
   }
 
-  const isHost = meeting.hostId === user?.id;
-  const otherParticipants = (participants ?? []).filter((p) => p.userId !== user?.id);
+  // Build video tiles from real-time socket participants
+  const socketList = Array.from(socketParticipants.values());
+  const otherSocketParticipants = socketList.filter((p) => p.userId !== user?.id);
 
-  // Build video grid: self + others (real + simulated to fill)
   const tiles = [
-    { id: -1, name: user?.name ?? "You", isSelf: true, isHost, attentionScore, colorIndex: 0 },
-    ...otherParticipants.slice(0, 5).map((p, i) => ({
-      id: p.id,
+    {
+      id: -1,
+      name: user?.name ?? "You",
+      isSelf: true,
+      isHost,
+      attentionScore,
+      isMuted,
+      isVideoOff,
+      colorIndex: 0,
+    },
+    ...otherSocketParticipants.slice(0, 5).map((p, i) => ({
+      id: p.userId,
       name: p.name,
       isSelf: false,
-      isHost: p.isHost,
+      isHost: meeting.hostId === p.userId,
       attentionScore: p.attentionScore,
+      isMuted: p.isMuted,
+      isVideoOff: p.isVideoOff,
       colorIndex: i + 1,
     })),
   ];
@@ -271,8 +274,9 @@ export default function MeetingRoom() {
   const gridCols =
     tiles.length === 1 ? "grid-cols-1 max-w-2xl mx-auto" :
     tiles.length === 2 ? "grid-cols-2" :
-    tiles.length <= 4 ? "grid-cols-2" :
-    "grid-cols-3";
+    tiles.length <= 4 ? "grid-cols-2" : "grid-cols-3";
+
+  const participantCount = socketParticipants.size || 1;
 
   return (
     <div className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] bg-zinc-950 overflow-hidden">
@@ -286,6 +290,11 @@ export default function MeetingRoom() {
           <span className="text-zinc-400 text-xs font-mono">{formatTime(elapsedSeconds)}</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Real-time connection indicator */}
+          <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md ${connected ? "text-green-400 bg-green-500/10" : "text-zinc-500 bg-zinc-800"}`}>
+            {connected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+            <span>{connected ? "Live" : "Connecting…"}</span>
+          </div>
           <button
             onClick={copyCode}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono transition-colors border border-white/10"
@@ -304,7 +313,7 @@ export default function MeetingRoom() {
             data-testid="button-toggle-participants"
           >
             <Users className="h-3 w-3" />
-            {(participants?.length ?? 1)}
+            {participantCount}
           </button>
         </div>
       </div>
@@ -323,22 +332,28 @@ export default function MeetingRoom() {
                 attentionScore={tile.attentionScore}
                 colorIndex={tile.colorIndex}
                 videoRef={tile.isSelf ? videoRef : undefined}
-                isMuted={tile.isSelf ? isMuted : false}
-                isVideoOff={tile.isSelf ? isVideoOff : false}
+                isMuted={tile.isMuted}
+                isVideoOff={tile.isVideoOff}
               />
             ))}
           </div>
         </div>
 
-        {/* Participants Panel */}
+        {/* Participants Panel — shows live socket state */}
         {showParticipants && (
           <div className="w-64 bg-zinc-900 border-l border-white/10 flex flex-col">
-            <div className="p-4 border-b border-white/10">
-              <h3 className="text-white font-medium text-sm">Participants ({participants?.length ?? 1})</h3>
+            <div className="p-4 border-b border-white/10 flex items-center justify-between">
+              <h3 className="text-white font-medium text-sm">Participants ({participantCount})</h3>
+              {connected && (
+                <span className="text-xs text-green-400 flex items-center gap-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                  Live
+                </span>
+              )}
             </div>
             <div className="flex-1 overflow-auto p-3 space-y-2">
               {/* Self */}
-              <div className="flex items-center gap-2 p-2 rounded-lg bg-white/5">
+              <div className="flex items-center gap-2 p-2 rounded-lg bg-white/5 border border-white/10">
                 <Avatar className="h-7 w-7">
                   <AvatarFallback className="text-xs bg-primary text-primary-foreground">
                     {user?.name.charAt(0)}
@@ -348,29 +363,38 @@ export default function MeetingRoom() {
                   <p className="text-white text-xs font-medium truncate">{user?.name} (You)</p>
                   {isHost && <p className="text-yellow-400 text-xs">Host</p>}
                 </div>
-                <div className="text-cyan-400 text-xs font-bold">{attentionScore}%</div>
+                <div className="flex items-center gap-1">
+                  {isMuted && <MicOff className="h-3 w-3 text-red-400" />}
+                  {isVideoOff && <VideoOff className="h-3 w-3 text-red-400" />}
+                  <span className="text-cyan-400 text-xs font-bold">{attentionScore}%</span>
+                </div>
               </div>
-              {/* Others */}
-              {(participants ?? [])
-                .filter((p) => p.userId !== user?.id)
-                .map((p) => (
-                  <div key={p.id} className="flex items-center gap-2 p-2 rounded-lg bg-white/5">
-                    <Avatar className="h-7 w-7">
-                      <AvatarFallback className="text-xs bg-violet-600 text-white">
-                        {p.name.charAt(0)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-xs font-medium truncate">{p.name}</p>
-                      {p.isHost && <p className="text-yellow-400 text-xs">Host</p>}
-                    </div>
+              {/* Other real-time participants */}
+              {otherSocketParticipants.map((p) => (
+                <div key={p.userId} className="flex items-center gap-2 p-2 rounded-lg bg-white/5 border border-white/10">
+                  <Avatar className="h-7 w-7">
+                    <AvatarFallback className="text-xs bg-violet-600 text-white">
+                      {p.name.charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-xs font-medium truncate">{p.name}</p>
+                    {meeting.hostId === p.userId && <p className="text-yellow-400 text-xs">Host</p>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {p.isMuted && <MicOff className="h-3 w-3 text-red-400" />}
+                    {p.isVideoOff && <VideoOff className="h-3 w-3 text-red-400" />}
                     {p.attentionScore != null && (
-                      <div className="text-cyan-400 text-xs font-bold">
-                        {p.attentionScore.toFixed(0)}%
-                      </div>
+                      <span className="text-cyan-400 text-xs font-bold">{p.attentionScore.toFixed(0)}%</span>
                     )}
                   </div>
-                ))}
+                </div>
+              ))}
+              {otherSocketParticipants.length === 0 && (
+                <p className="text-zinc-500 text-xs text-center py-4">
+                  You're alone in this meeting.<br />Share the code to invite others.
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -388,8 +412,10 @@ export default function MeetingRoom() {
         </div>
         <span className="text-cyan-400 text-xs font-bold">{attentionScore}%</span>
         <div className="ml-auto flex items-center gap-1 text-green-400 text-xs">
-          <Wifi className="h-3 w-3" />
-          <span>Live</span>
+          {connected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3 text-zinc-500" />}
+          <span className={connected ? "text-green-400" : "text-zinc-500"}>
+            {connected ? "Live" : "Offline"}
+          </span>
         </div>
       </div>
 

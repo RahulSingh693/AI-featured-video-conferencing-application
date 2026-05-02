@@ -14,6 +14,7 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth } from "../lib/auth-middleware";
 import { generateMeetingCode } from "../lib/code-gen";
+import { broadcastMeetingEnded, updateParticipantAttention } from "../lib/socket";
 
 const router: IRouter = Router();
 
@@ -319,6 +320,9 @@ router.post("/meetings/:meetingId/end", requireAuth, async (req, res): Promise<v
     .from(participantsTable)
     .where(eq(participantsTable.meetingId, meeting.id));
 
+  // Notify all participants in the room that the meeting ended
+  broadcastMeetingEnded(params.data.meetingId);
+
   res.json(formatMeeting(updated, host?.name ?? "", count ?? 0));
 });
 
@@ -459,6 +463,9 @@ router.post("/meetings/:meetingId/attention", requireAuth, async (req, res): Pro
         eq(participantsTable.userId, userId),
       ),
     );
+
+  // Broadcast updated attention score to all participants in real time
+  updateParticipantAttention(params.data.meetingId, userId, avgScore);
 
   res.json({ message: "Attention recorded" });
 });
