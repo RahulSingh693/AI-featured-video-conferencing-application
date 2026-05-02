@@ -3,13 +3,22 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Smart Video Conferencing API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: meetings
+    description: Meeting operations
+  - name: attention
+    description: Attention tracking
+  - name: dashboard
+    description: Dashboard and analytics
+
 paths:
   /healthz:
     get:
@@ -24,6 +33,340 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterBody"
+      responses:
+        "201":
+          description: User registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginBody"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /meetings:
+    get:
+      operationId: listMeetings
+      tags: [meetings]
+      summary: List user's meetings
+      responses:
+        "200":
+          description: List of meetings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Meeting"
+
+    post:
+      operationId: createMeeting
+      tags: [meetings]
+      summary: Create a new meeting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMeetingBody"
+      responses:
+        "201":
+          description: Meeting created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meeting"
+
+  /meetings/{meetingId}:
+    get:
+      operationId: getMeeting
+      tags: [meetings]
+      summary: Get meeting details
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Meeting details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingDetail"
+        "404":
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /meetings/{meetingId}/join:
+    post:
+      operationId: joinMeeting
+      tags: [meetings]
+      summary: Join a meeting by code
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Joined meeting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meeting"
+        "404":
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /meetings/join-by-code:
+    post:
+      operationId: joinMeetingByCode
+      tags: [meetings]
+      summary: Join a meeting using a meeting code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JoinByCodeBody"
+      responses:
+        "200":
+          description: Meeting found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meeting"
+        "404":
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /meetings/{meetingId}/end:
+    post:
+      operationId: endMeeting
+      tags: [meetings]
+      summary: End a meeting (host only)
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Meeting ended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meeting"
+        "403":
+          description: Not authorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /meetings/{meetingId}/summary:
+    get:
+      operationId: getMeetingSummary
+      tags: [meetings]
+      summary: Get AI-generated meeting summary
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Meeting summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingSummary"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /meetings/{meetingId}/participants:
+    get:
+      operationId: getMeetingParticipants
+      tags: [meetings]
+      summary: Get participants of a meeting
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of participants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Participant"
+
+  /meetings/{meetingId}/attention:
+    post:
+      operationId: recordAttention
+      tags: [attention]
+      summary: Record attention score for current user in a meeting
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttentionBody"
+      responses:
+        "200":
+          description: Attention recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      tags: [dashboard]
+      summary: Get dashboard summary stats for current user
+      responses:
+        "200":
+          description: Dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  /dashboard/analytics:
+    get:
+      operationId: getDashboardAnalytics
+      tags: [dashboard]
+      summary: Get meeting analytics over time for graphs
+      responses:
+        "200":
+          description: Analytics data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardAnalytics"
+
+  /dashboard/recent-meetings:
+    get:
+      operationId: getRecentMeetings
+      tags: [dashboard]
+      summary: Get recent meetings for the current user
+      responses:
+        "200":
+          description: Recent meetings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecentMeeting"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +377,356 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    SuccessResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    RegisterBody:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+        avatar:
+          type: ["string", "null"]
+      required:
+        - name
+        - email
+        - password
+
+    LoginBody:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required:
+        - email
+        - password
+
+    AuthUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        avatar:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - email
+        - createdAt
+
+    CreateMeetingBody:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+      required:
+        - title
+
+    JoinByCodeBody:
+      type: object
+      properties:
+        code:
+          type: string
+      required:
+        - code
+
+    Meeting:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        code:
+          type: string
+        hostId:
+          type: integer
+        hostName:
+          type: string
+        status:
+          type: string
+          enum: [scheduled, active, ended]
+        startedAt:
+          type: ["string", "null"]
+        endedAt:
+          type: ["string", "null"]
+        participantCount:
+          type: integer
+        createdAt:
+          type: string
+      required:
+        - id
+        - title
+        - code
+        - hostId
+        - hostName
+        - status
+        - participantCount
+        - createdAt
+
+    MeetingDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        code:
+          type: string
+        hostId:
+          type: integer
+        hostName:
+          type: string
+        status:
+          type: string
+          enum: [scheduled, active, ended]
+        startedAt:
+          type: ["string", "null"]
+        endedAt:
+          type: ["string", "null"]
+        participantCount:
+          type: integer
+        avgAttentionScore:
+          type: ["number", "null"]
+        transcript:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        myAttentionScore:
+          type: ["number", "null"]
+        myJoinTime:
+          type: ["string", "null"]
+        myLeaveTime:
+          type: ["string", "null"]
+      required:
+        - id
+        - title
+        - code
+        - hostId
+        - hostName
+        - status
+        - participantCount
+        - createdAt
+
+    Participant:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        name:
+          type: string
+        avatar:
+          type: ["string", "null"]
+        joinTime:
+          type: ["string", "null"]
+        leaveTime:
+          type: ["string", "null"]
+        attentionScore:
+          type: ["number", "null"]
+        isHost:
+          type: boolean
+      required:
+        - id
+        - userId
+        - name
+        - isHost
+
+    MeetingSummary:
+      type: object
+      properties:
+        meetingId:
+          type: integer
+        title:
+          type: string
+        summary:
+          type: ["string", "null"]
+        keyPoints:
+          type: array
+          items:
+            type: string
+        actionItems:
+          type: array
+          items:
+            type: string
+        transcript:
+          type: ["string", "null"]
+        duration:
+          type: ["integer", "null"]
+        participantCount:
+          type: integer
+        avgAttentionScore:
+          type: ["number", "null"]
+      required:
+        - meetingId
+        - title
+        - keyPoints
+        - actionItems
+        - participantCount
+
+    AttentionBody:
+      type: object
+      properties:
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+      required:
+        - score
+
+    DashboardStats:
+      type: object
+      properties:
+        totalMeetings:
+          type: integer
+        totalMeetingsHosted:
+          type: integer
+        totalMeetingsAttended:
+          type: integer
+        avgAttentionScore:
+          type: ["number", "null"]
+        totalParticipants:
+          type: integer
+        totalDurationMinutes:
+          type: integer
+        thisMonthMeetings:
+          type: integer
+        bestAttentionScore:
+          type: ["number", "null"]
+      required:
+        - totalMeetings
+        - totalMeetingsHosted
+        - totalMeetingsAttended
+        - totalParticipants
+        - totalDurationMinutes
+        - thisMonthMeetings
+
+    WeeklyDataPoint:
+      type: object
+      properties:
+        date:
+          type: string
+        meetings:
+          type: integer
+        attentionScore:
+          type: ["number", "null"]
+        participants:
+          type: integer
+      required:
+        - date
+        - meetings
+        - participants
+
+    AttentionTrend:
+      type: object
+      properties:
+        meetingTitle:
+          type: string
+        date:
+          type: string
+        score:
+          type: ["number", "null"]
+      required:
+        - meetingTitle
+        - date
+
+    DashboardAnalytics:
+      type: object
+      properties:
+        weeklyActivity:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyDataPoint"
+        attentionTrend:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttentionTrend"
+        meetingsByMonth:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonthlyMeetings"
+        participationRate:
+          type: number
+      required:
+        - weeklyActivity
+        - attentionTrend
+        - meetingsByMonth
+        - participationRate
+
+    MonthlyMeetings:
+      type: object
+      properties:
+        month:
+          type: string
+        count:
+          type: integer
+      required:
+        - month
+        - count
+
+    RecentMeeting:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        status:
+          type: string
+          enum: [scheduled, active, ended]
+        hostName:
+          type: string
+        isHost:
+          type: boolean
+        participantCount:
+          type: integer
+        attentionScore:
+          type: ["number", "null"]
+        startedAt:
+          type: ["string", "null"]
+        endedAt:
+          type: ["string", "null"]
+        durationMinutes:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - title
+        - status
+        - hostName
+        - isHost
+        - participantCount
+        - createdAt
