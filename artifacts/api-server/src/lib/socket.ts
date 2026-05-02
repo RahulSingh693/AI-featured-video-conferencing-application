@@ -17,6 +17,14 @@ type SignalData =
   | { type: "answer"; sdp: RTCSessionDescriptionInit }
   | { type: "ice-candidate"; candidate: RTCIceCandidateInit | null };
 
+export interface ChatMessage {
+  id: string;
+  userId: number;
+  name: string;
+  text: string;
+  timestamp: string;
+}
+
 export interface ServerToClientEvents {
   "participant:joined": (data: ParticipantPresence) => void;
   "participant:left": (data: { userId: number }) => void;
@@ -25,6 +33,7 @@ export interface ServerToClientEvents {
   "room:state": (data: { participants: ParticipantPresence[] }) => void;
   "webrtc:signal": (data: { fromUserId: number; signal: SignalData }) => void;
   "webrtc:new-peer": (data: { userId: number; name: string }) => void;
+  "chat:message": (data: ChatMessage) => void;
 }
 
 export interface ClientToServerEvents {
@@ -32,6 +41,7 @@ export interface ClientToServerEvents {
   "meeting:leave": (data: { meetingId: number; userId: number }) => void;
   "participant:status": (data: { meetingId: number; userId: number; isMuted?: boolean; isVideoOff?: boolean }) => void;
   "webrtc:signal": (data: { meetingId: number; targetUserId: number; signal: SignalData }) => void;
+  "chat:message": (data: { meetingId: number; text: string }) => void;
 }
 
 let io: SocketIOServer<ClientToServerEvents, ServerToClientEvents> | null = null;
@@ -136,6 +146,26 @@ export function initSocket(httpServer: HttpServer) {
         room.set(userId, p);
       }
       io?.to(`meeting:${meetingId}`).emit("participant:updated", { userId, isMuted, isVideoOff });
+    });
+
+    socket.on("chat:message", ({ meetingId, text }) => {
+      const userId = socketUserMap.get(socket.id);
+      if (userId === undefined) return;
+
+      const room = meetingRooms.get(meetingId);
+      const participant = room?.get(userId);
+      if (!participant) return;
+
+      const msg = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        userId,
+        name: participant.name,
+        text: text.slice(0, 500),
+        timestamp: new Date().toISOString(),
+      };
+
+      io?.to(`meeting:${meetingId}`).emit("chat:message", msg);
+      logger.info({ meetingId, userId, msgId: msg.id }, "Chat message broadcast");
     });
 
     socket.on("webrtc:signal", ({ meetingId, targetUserId, signal }) => {
