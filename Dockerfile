@@ -7,7 +7,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 # Build frontend — pass the env vars vite.config.ts requires at build time
 RUN PORT=3000 BASE_PATH=/ pnpm --filter "@workspace/meet-app" build
