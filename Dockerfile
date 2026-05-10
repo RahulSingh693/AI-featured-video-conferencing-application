@@ -34,7 +34,7 @@ COPY --from=builder /app/pnpm-workspace.yaml   ./pnpm-workspace.yaml
 COPY --from=builder /app/pnpm-lock.yaml        ./pnpm-lock.yaml
 COPY --from=builder /app/artifacts/api-server/package.json ./artifacts/api-server/package.json
 
-RUN pnpm install --prod --frozen-lockfile
+RUN pnpm install --prod --no-frozen-lockfile
 
 EXPOSE 3000
 
