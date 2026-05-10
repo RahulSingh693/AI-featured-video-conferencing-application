@@ -68,7 +68,7 @@ export function Navbar() {
                   <div className="flex items-center gap-2">
                     <Avatar className="h-8 w-8 border border-border">
                       <AvatarImage src={user.avatar || undefined} alt={user.name} />
-                      <AvatarFallback>{user?.name?.charAt(0).toUpperCase()}</AvatarFallback>
+                      <AvatarFallback>{user?.name ? user.name.charAt(0).toUpperCase() : "?"}</AvatarFallback>
                     </Avatar>
                     <Button variant="ghost" size="icon" onClick={handleLogout} disabled={logout.isPending} data-testid="button-logout">
                       <LogOut className="h-4 w-4" />
