@@ -12,7 +12,7 @@ RUN PORT=3000 BASE_PATH=/ pnpm --filter "@workspace/meet-app" build
 
 RUN pnpm --filter "@workspace/api-server" build
 
-RUN cp -r artifacts/meet-app/dist public
+RUN cp -r artifacts/meet-app/dist /app/public
 
 EXPOSE 3000
 
