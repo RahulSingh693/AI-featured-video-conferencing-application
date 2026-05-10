@@ -8,6 +8,9 @@ const basePath = process.env.BASE_PATH ?? "/";
 
 export default defineConfig({
   base: basePath,
+  define: {
+    'process.env.NODE_ENV': '"production"',
+  },
   plugins: [
     react(),
     tailwindcss(),
