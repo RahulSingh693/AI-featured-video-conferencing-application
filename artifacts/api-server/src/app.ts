@@ -67,7 +67,7 @@ if (process.env["NODE_ENV"] === "production") {
   if (existsSync(publicDir)) {
     app.use(express.static(publicDir));
     // Send index.html for any unmatched route (React SPA routing)
-    app.get("*", (_req, res) => {
+    app.get("/{*path}", (_req, res) => {
       res.sendFile(join(publicDir, "index.html"));
     });
   }
