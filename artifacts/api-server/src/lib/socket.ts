@@ -42,7 +42,13 @@ export interface ServerToClientEvents {
 export interface ClientToServerEvents {
   "meeting:join": (data: { meetingId: number; userId: number; name: string; avatar: string | null }) => void;
   "meeting:leave": (data: { meetingId: number; userId: number }) => void;
-  "participant:status": (data: { meetingId: number; userId: number; isMuted?: boolean; isVideoOff?: boolean }) => void;
+  "participant:status": (data: {
+    meetingId: number;
+    userId: number;
+    isMuted?: boolean;
+    isVideoOff?: boolean;
+    attentionScore?: number;   // ← real posture score from MediaPipe
+  }) => void;
   "webrtc:signal": (data: { meetingId: number; targetUserId: number; signal: SignalData }) => void;
   "chat:message": (data: { meetingId: number; text: string }) => void;
   "hand:toggle": (data: { meetingId: number; userId: number }) => void;
@@ -149,15 +155,21 @@ export function initSocket(httpServer: HttpServer) {
       logger.info({ meetingId, userId }, "Participant left meeting room");
     });
 
-    socket.on("participant:status", ({ meetingId, userId, isMuted, isVideoOff }) => {
+    socket.on("participant:status", ({ meetingId, userId, isMuted, isVideoOff, attentionScore }) => {
       const room = meetingRooms.get(meetingId);
       if (room?.has(userId)) {
         const p = room.get(userId)!;
-        if (isMuted !== undefined) p.isMuted = isMuted;
-        if (isVideoOff !== undefined) p.isVideoOff = isVideoOff;
+        if (isMuted        !== undefined) p.isMuted        = isMuted;
+        if (isVideoOff     !== undefined) p.isVideoOff     = isVideoOff;
+        if (attentionScore !== undefined) p.attentionScore = attentionScore;
         room.set(userId, p);
       }
-      io?.to(`meeting:${meetingId}`).emit("participant:updated", { userId, isMuted, isVideoOff });
+      io?.to(`meeting:${meetingId}`).emit("participant:updated", {
+        userId,
+        isMuted,
+        isVideoOff,
+        attentionScore,
+      });
     });
 
     socket.on("hand:toggle", ({ meetingId, userId }) => {

@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMeetingSocket } from "@/hooks/use-meeting-socket";
 import { useWebRTC } from "@/hooks/use-webrtc";
 import { useMeetingChat } from "@/hooks/use-meeting-chat";
+import { usePostureScore } from "@/hooks/use-posture-score";
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, Monitor,
   Users, Copy, BrainCircuit, Crown, Wifi, WifiOff,
@@ -133,13 +134,11 @@ export default function MeetingRoom() {
   const [showParticipants, setShowParticipants] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  const [attentionScore, setAttentionScore] = useState<number>(82);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const attentionIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
@@ -196,14 +195,33 @@ export default function MeetingRoom() {
     isPanelOpen: showChat,
   });
 
-  // Auto-scroll chat to bottom on new messages
+  const {
+    score: postureScoreValue,
+    suggestions: postureSuggestions,
+    isCalibrating,
+    calibrationProgress,
+  } = usePostureScore({
+    videoRef: localVideoRef,
+    enabled: !isVideoOff && !!localStream,
+  });
+
+  const attentionScore = postureScoreValue ?? 0;
+
+  useEffect(() => {
+    if (!meetingId || !user || postureScoreValue === null) return;
+    recordAttention.mutate({ meetingId, data: { score: postureScoreValue } });
+
+    if (connected) {
+      updateStatus(isMuted, isVideoOff, postureScoreValue);
+    }
+  }, [postureScoreValue]);
+
   useEffect(() => {
     if (showChat) {
       chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, showChat]);
 
-  // Camera + mic
   useEffect(() => {
     let active = true;
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
@@ -225,27 +243,6 @@ export default function MeetingRoom() {
     timerIntervalRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
     return () => { if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); };
   }, []);
-
-  // Attention tracking — simulates AI gaze/engagement scoring every 8 s
-  useEffect(() => {
-    if (!meetingId || !user) return;
-    const sendAttention = () => {
-      setAttentionScore((prev) => {
-        // Baseline shifts based on A/V state
-        const baseline = isMuted && isVideoOff ? 38 : isVideoOff ? 58 : isMuted ? 70 : 80;
-        // Random walk toward baseline with occasional spikes/dips
-        const drift = (Math.random() * 18 - 9);           // ±9 random noise
-        const pull  = (baseline - prev) * 0.18;           // regression to baseline
-        const next  = Math.min(100, Math.max(10, Math.round(prev + drift + pull)));
-        recordAttention.mutate({ meetingId, data: { score: next } });
-        return next;
-      });
-    };
-    sendAttention(); // immediate first reading
-    attentionIntervalRef.current = setInterval(sendAttention, 8000);
-    return () => { if (attentionIntervalRef.current) clearInterval(attentionIntervalRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingId, user?.id, isMuted, isVideoOff]);
 
   const toggleMute = useCallback(() => {
     const next = !isMuted;
@@ -404,19 +401,43 @@ export default function MeetingRoom() {
         <div className="flex-1 p-4 overflow-auto">
           <div className={`grid ${gridCols} gap-3 h-full content-center`}>
             {tiles.map((tile) => (
-              <ParticipantTile
-                key={tile.id}
-                name={tile.name}
-                isSelf={tile.isSelf}
-                isHost={tile.isHost}
-                attentionScore={tile.attentionScore}
-                colorIndex={tile.colorIndex}
-                localVideoRef={tile.isSelf ? localVideoRef : undefined}
-                stream={tile.stream}
-                isMuted={tile.isMuted}
-                isVideoOff={tile.isVideoOff}
-                isHandRaised={tile.isHandRaised}
-              />
+              <div key={tile.id} className="relative">
+                <ParticipantTile
+                  name={tile.name}
+                  isSelf={tile.isSelf}
+                  isHost={tile.isHost}
+                  attentionScore={tile.attentionScore}
+                  colorIndex={tile.colorIndex}
+                  localVideoRef={tile.isSelf ? localVideoRef : undefined}
+                  stream={tile.stream}
+                  isMuted={tile.isMuted}
+                  isVideoOff={tile.isVideoOff}
+                  isHandRaised={tile.isHandRaised}
+                />
+
+                {/* Calibration progress bar — only on your own tile */}
+                {tile.isSelf && isCalibrating && (
+                  <div className="absolute inset-x-0 bottom-10 mx-2 bg-black/70 text-cyan-300 text-xs rounded-lg px-3 py-1.5 backdrop-blur-sm flex items-center gap-2">
+                    <span className="flex-shrink-0">Calibrating…</span>
+                    <div className="flex-1 bg-white/20 rounded-full h-1">
+                      <div
+                        className="h-full bg-cyan-400 rounded-full transition-all duration-300"
+                        style={{ width: `${calibrationProgress * 100}%` }}
+                      />
+                    </div>
+                    <span className="flex-shrink-0">{Math.round(calibrationProgress * 100)}%</span>
+                  </div>
+                )}
+
+                {/* Posture suggestions — only on your own tile after calibration */}
+                {tile.isSelf && !isCalibrating && postureSuggestions.length > 0 && (
+                  <div className="absolute inset-x-0 bottom-10 mx-2 bg-amber-900/80 text-amber-200 text-xs rounded-lg px-3 py-1.5 backdrop-blur-sm space-y-0.5">
+                    {postureSuggestions.slice(0, 2).map((s) => (
+                      <p key={s}>⚠ {s}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -446,7 +467,13 @@ export default function MeetingRoom() {
                   {isHandRaised && <span className="text-sm">✋</span>}
                   {isMuted && <MicOff className="h-3 w-3 text-red-400" />}
                   {isVideoOff && <VideoOff className="h-3 w-3 text-red-400" />}
-                  <span className="text-cyan-400 text-xs font-bold">{attentionScore}%</span>
+                  <span className={`text-xs font-bold ${
+                    isCalibrating ? "text-zinc-500" :
+                    attentionScore >= 75 ? "text-emerald-400" :
+                    attentionScore >= 50 ? "text-yellow-400" : "text-red-400"
+                  }`}>
+                    {isCalibrating ? "…" : `${attentionScore}%`}
+                  </span>
                 </div>
               </div>
               {socketList.map((p) => (
@@ -575,9 +602,13 @@ export default function MeetingRoom() {
         {/* My score */}
         <div className="flex items-center gap-1.5">
           <span className="text-zinc-500 text-xs">You</span>
-          <span className={`text-xs font-bold ${attentionScore >= 75 ? "text-emerald-400" : attentionScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>
-            {attentionScore}%
-          </span>
+          {isCalibrating ? (
+            <span className="text-zinc-500 text-xs">Calibrating… {Math.round(calibrationProgress * 100)}%</span>
+          ) : (
+            <span className={`text-xs font-bold ${attentionScore >= 75 ? "text-emerald-400" : attentionScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+              {attentionScore}%
+            </span>
+          )}
         </div>
 
         {/* Room average bar */}
@@ -643,8 +674,6 @@ export default function MeetingRoom() {
           <span className="text-xs">People</span>
         </button>
 
-        {/* Chat button with unread badge */}
-        {/* Raise Hand */}
         <button
           onClick={handleToggleHand}
           className={`flex flex-col items-center gap-1 p-3 rounded-xl transition-all duration-200 ${

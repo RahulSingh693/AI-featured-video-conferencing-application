@@ -24,15 +24,15 @@ export function useMeetingSocket({
   const [connected, setConnected] = useState(false);
 
   const updateStatus = useCallback(
-    (isMuted?: boolean, isVideoOff?: boolean) => {
-      if (!enabled) return;
-      const socket = getSocket();
-      if (socket.connected) {
-        socket.emit("participant:status", { meetingId, userId, isMuted, isVideoOff });
-      }
-    },
-    [meetingId, userId, enabled],
-  );
+  (isMuted?: boolean, isVideoOff?: boolean, attentionScore?: number) => {
+    if (!enabled) return;
+    const socket = getSocket();
+    if (socket.connected) {
+      socket.emit("participant:status", { meetingId, userId, isMuted, isVideoOff, attentionScore });
+    }
+  },
+  [meetingId, userId, enabled],
+);
 
   const toggleHand = useCallback(() => {
     if (!enabled) return;

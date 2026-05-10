@@ -56,4 +56,22 @@ app.use(
 
 app.use("/api", router);
 
+
+import { join } from "path";
+import { existsSync } from "fs";
+ 
+// Serve built frontend in production
+// (Dockerfile copies artifacts/meet-app/dist → /public)
+if (process.env["NODE_ENV"] === "production") {
+  const publicDir = join(process.cwd(), "public");
+  if (existsSync(publicDir)) {
+    app.use(express.static(publicDir));
+    // Send index.html for any unmatched route (React SPA routing)
+    app.get("*", (_req, res) => {
+      res.sendFile(join(publicDir, "index.html"));
+    });
+  }
+}
+ 
 export default app;
+
